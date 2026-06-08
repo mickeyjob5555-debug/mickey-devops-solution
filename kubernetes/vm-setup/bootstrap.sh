@@ -12,7 +12,7 @@
 
 set -euo pipefail
 
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 CLUSTER_NAME="${CLUSTER_NAME:-devops-test}"
 KCTX="kind-${CLUSTER_NAME}"
 
@@ -21,7 +21,7 @@ KCTX="kind-${CLUSTER_NAME}"
 kc() { kubectl --context "${KCTX}" "$@"; }
 
 echo "==> Creating kind cluster '${CLUSTER_NAME}' (multi-node)"
-kind create cluster --name "${CLUSTER_NAME}" --config "${REPO_ROOT}/vm-setup/kind-config.yaml"
+kind create cluster --name "${CLUSTER_NAME}" --config "${REPO_ROOT}/kubernetes/vm-setup/kind-config.yaml"
 
 # Hard fail if the kind context didn't get created (don't fall back to ambient context).
 kubectl config get-contexts "${KCTX}" >/dev/null 2>&1 || {
@@ -37,7 +37,7 @@ echo "==> Creating 'apps' namespace"
 kc create namespace apps --dry-run=client -o yaml | kc apply -f -
 
 echo "==> Deploying MongoDB (single-member replica set rs0) in 'data'"
-kc apply -f "${REPO_ROOT}/gitops/sandbox/mongodb/mongodb.yaml"
+kc apply -f "${REPO_ROOT}/kubernetes/gitops/sandbox/mongodb/mongodb.yaml"
 kc -n data rollout status statefulset/mongodb --timeout=180s
 
 echo "==> Initiating the replica set"
