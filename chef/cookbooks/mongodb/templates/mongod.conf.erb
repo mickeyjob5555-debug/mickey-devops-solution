@@ -1,17 +1,23 @@
+# Managed by Chef. Do not edit by hand.
+# Template: mongodb/templates/mongod.conf.erb
+
 storage:
   dbPath: <%= node['mongodb']['data_dir'] %>
+  wiredTiger:
+    engineConfig:
+      cacheSizeGB: 1
+
+systemLog:
+  destination: file
+  path: /var/log/mongodb/mongod.log
+  logAppend: true
 
 net:
   port: <%= node['mongodb']['port'] %>
-  bindIp: 0.0.0.0
+  bindIp: <%= node['mongodb']['bind_ip'] %>
 
 security:
-  authorization: disabled
+  authorization: enabled
 
 replication:
-  replSetName: rs0
-
-# Bootstrap admin credentials.
-setParameter:
-  adminUser: <%= node['mongodb']['admin_user'] %>
-  adminPassword: <%= node['mongodb']['admin_password'] %>
+  replSetName: <%= node['mongodb']['replset'] %>

@@ -54,3 +54,30 @@ Other things I noticed but did not need to fix for validate to pass:
 - The instance has no service_account attached. In production you would attach a service account with least privilege, so the instance can talk to GCP services without keys.
 - The instance has no deletion_protection set. That means a terraform destroy would wipe the database without any warning. For a database, deletion protection should be on.
 - The image was debian-cloud/debian-11. Debian 11 is close to end of life. I changed it to debian-12.
+
+## Task 3 - Chef
+
+Recipe issues (chef/cookbooks/mongodb/recipes/default.rb):
+- The resource order was wrong. The recipe ran rs.initiate() before the config file was written and before mongod was started. On a fresh host this fails.
+- The recipe did not add the MongoDB apt repository. mongodb-org is not in the default Ubuntu repos, so the package install would fail.
+- The package resource did not use a version. The version attribute existed but was ignored.
+- execute 'enable-mongod' ran systemctl enable every converge and did not notify anything. Replaced with a service resource that enables and starts in one step.
+- The replica set init was not idempotent. It ran on every converge with no guard. Added a not_if check.
+- The init used the mongo shell, which is removed in MongoDB 6 and later. Changed to mongosh.
+- No wait for mongod to be ready before running rs.initiate(). Added a wait step.
+- The service resource only did :start, not :enable, so mongod would not start on boot.
+- The template did not notify the service, so config changes did not trigger a restart.
+- The data directory had no mode set. Changed to 0750 because it holds database files.
+
+Attributes issues (chef/cookbooks/mongodb/attributes/default.rb):
+- bind_ip was set with node.default instead of default. Both work, but the standard form in an attribute file is default.
+- The bind_ip attribute was never used. The template hardcoded 0.0.0.0.
+- The admin password was hardcoded as admin123. Passwords should not live in a cookbook. They should come from an encrypted data bag, Vault, or the Chef secret store.
+- MongoDB version 4.2.0 is end of life. Changed to 6.0.
+
+Template issues (chef/cookbooks/mongodb/templates/mongod.conf.erb):
+- bindIp was hardcoded as 0.0.0.0. Changed to use the bind_ip attribute, and defaulted it to 127.0.0.1.
+- authorization was disabled. Combined with bindIp 0.0.0.0, the database was open to anyone on the network. Changed to enabled.
+- The setParameter block for adminUser and adminPassword is not valid MongoDB configuration. Those are not real parameters. The credentials also did not exist in MongoDB's user database. Removed. Admin users are created with db.createUser, not with config parameters.
+- No log settings. Added systemLog so logs go to a file with append.
+- No wiredTiger cache limit. Added a cacheSizeGB so mongod does not eat all the host RAM.
