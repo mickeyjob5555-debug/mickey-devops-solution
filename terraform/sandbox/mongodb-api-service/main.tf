@@ -17,7 +17,7 @@ module "mongodb" {
   source = "../../modules/mongodb-instance"
 
   name          = "mongodb-api-service"
-  replica_count = 2
+  replica_count = 3
   zone          = "us-central1-a"
   disk_size_gb  = 100
 

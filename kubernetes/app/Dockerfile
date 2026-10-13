@@ -15,7 +15,7 @@ RUN apt-get update \
 # Application code.
 COPY server.js ./
 
-# Secrets must NOT be baked into the image. MONGO_URI comes from a Kubernetes Secret at runtime.
+# No credentials in the image. MONGO_URI is supplied by the deployment at runtime.
 
 EXPOSE 3000
 

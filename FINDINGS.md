@@ -1,83 +1,90 @@
-# DevOps Engineer Candidate Test - Findings
+# Findings
+
+Record of every issue I found. Severity tags: blocker (stops build or deploy), should-fix (production problem), nice-to-have (improvement).
 
 ## Task 1 - Kubernetes
 
-## Task 2 - Terraform
-
-## Task 3 - Chef
-
-### Task 1 - Helm chart, Kustomize, and deployment findings
-
-Kustomize overlay (`kubernetes/gitops/sandbox/api-service/kustomization.yaml`):
-- `chartHome: ../../../helm-chart` is a typo. The directory is `helm-charts` (plural). Kustomize cannot find the chart.
-- `images: - name: api` does not match the chart's image name `api-service`. The override does nothing.
-- The patch targets `kind: Deployment, name: api-svc`, but the release name is `api-service`. The resources patch never applies to anything.
-
-Helm values (`kubernetes/helm-charts/api-service/values.yaml`):
-- `image.pullPolicy: Always` with tag `latest`. In kind the image is loaded locally, so `Always` tries to pull from a registry and fails with `ErrImagePull`.
-- `mongo.uri` points at `mongodb-0.mongodb.svc.cluster.local`, which resolves in the current namespace `apps`. MongoDB runs in `data`. Wrong DNS name.
-- `mongo.uri` does not include `replicaSet=rs0`. The driver will refuse to connect to a replica set without it.
-- `mongo.uri` embeds a password that does not exist in the sandbox (auth is off).
-- `resources: {}` means the pod is `BestEffort` and first in line for eviction.
-- `replicaCount: 1` and `pdb.enabled: false` mean no HA and no disruption budget.
-
-Deployment template (`kubernetes/helm-charts/api-service/templates/deployment.yaml`):
-- YAML is misindented. `ports`, `env`, `livenessProbe`, `readinessProbe`, and `resources` are siblings of `- name:` instead of members of the container. The rendered manifest is invalid.
-- `livenessProbe` points at `/healthz`, which pings MongoDB. Liveness probes must not depend on external services. A DB hiccup would cause Kubernetes to restart the pod in a loop.
-- No `startupProbe`.
-- No `securityContext` at pod or container level.
-- No anti-affinity or topology spread. Two replicas could land on the same node.
-
-Secret (`kubernetes/helm-charts/api-service/templates/secret.yaml`):
-- The Secret is created but never referenced by the Deployment. Dead code in the sandbox.
-- The password is also in plaintext in `values.yaml`. In production this must be replaced with a secret reference (or external secret manager).
-
-Service (`kubernetes/helm-charts/api-service/templates/service.yaml`):
-- Looks correct. Port 80 to targetPort 3000, ClusterIP, selector matches the deployment.
+| # | File / area | Issue | Severity | Fixed? | Notes |
+|---|---|---|---|---|---|
+| 1 | `kubernetes/app/Dockerfile` | Base image tag `node:18-slimm` is a typo, image will not build | blocker | yes | Changed to `node:18-slim` |
+| 2 | `kubernetes/app/Dockerfile` | `MONGO_PASSWORD` hardcoded as env var, leaks via `docker inspect` | should-fix | yes | Removed. Should come from a K8s Secret at runtime |
+| 3 | `kubernetes/app/Dockerfile` | `vim` and `build-essential` in runtime image, bloat and attack surface | nice-to-have | yes | Removed, kept only curl |
+| 4 | `kubernetes/app/Dockerfile` | `apt-get install` without `--no-install-recommends`, no cleanup of `/var/lib/apt/lists` | nice-to-have | yes | Added flag and cleanup |
+| 5 | `kubernetes/app/Dockerfile` | `COPY . .` before `npm install` breaks layer caching | should-fix | yes | Copy `package.json` first, install, then copy `server.js` |
+| 6 | `kubernetes/app/Dockerfile` | No `USER`, container runs as root | should-fix | yes | Added `USER node` |
+| 7 | `kubernetes/app/` | No `.dockerignore`, `COPY . .` copies `node_modules` and `.git` | nice-to-have | no | Would add `.dockerignore` |
+| 8 | `kubernetes/app/Dockerfile` | Floating tag `node:18-slim` instead of digest | nice-to-have | no | Would pin to a digest for reproducibility |
+| 9 | `kubernetes/helm-charts/api-service/values.yaml` | `pullPolicy: Always` with tag `latest`, fails in kind with `ErrImagePull` | blocker | yes | Changed to `IfNotPresent` and tag `sandbox` |
+| 10 | `kubernetes/helm-charts/api-service/values.yaml` | Mongo URI points at `mongodb-0.mongodb.svc.cluster.local`, wrong namespace | blocker | yes | Changed to `mongodb-0.mongodb.data.svc.cluster.local` |
+| 11 | `kubernetes/helm-charts/api-service/values.yaml` | Mongo URI missing `replicaSet=rs0` | blocker | yes | Added the parameter |
+| 12 | `kubernetes/helm-charts/api-service/values.yaml` | Mongo URI contains a password but sandbox has no auth | should-fix | yes | Removed the password |
+| 13 | `kubernetes/helm-charts/api-service/values.yaml` | No resource requests or limits, pod is BestEffort | should-fix | yes | Added requests and limits |
+| 14 | `kubernetes/helm-charts/api-service/values.yaml` | `replicaCount: 1`, no HA | should-fix | yes | Set to 2 |
+| 15 | `kubernetes/helm-charts/api-service/values.yaml` | PDB disabled | should-fix | yes | Enabled, `minAvailable: 1` |
+| 16 | `kubernetes/helm-charts/api-service/templates/deployment.yaml` | YAML indentation wrong, `ports`/`env`/probes are siblings of container, manifest invalid | blocker | yes | Fixed indentation |
+| 17 | `kubernetes/helm-charts/api-service/templates/deployment.yaml` | `livenessProbe` on `/healthz` depends on MongoDB, restart loop on DB hiccup | should-fix | yes | Liveness uses `/`, readiness stays on `/healthz` |
+| 18 | `kubernetes/helm-charts/api-service/templates/deployment.yaml` | No `startupProbe`, slow start can be killed by liveness | should-fix | yes | Added startupProbe on `/` |
+| 19 | `kubernetes/helm-charts/api-service/templates/deployment.yaml` | No `securityContext` at pod or container level | should-fix | yes | Added `runAsNonRoot`, `runAsUser`, `runAsGroup`, `fsGroup`, `allowPrivilegeEscalation: false`, drop ALL caps |
+| 20 | `kubernetes/helm-charts/api-service/templates/deployment.yaml` | No anti-affinity, both replicas can land on same node | should-fix | yes | Added `podAntiAffinity` on hostname |
+| 21 | `kubernetes/helm-charts/api-service/templates/secret.yaml` | Secret created but never used, dead code | should-fix | no | Would wire the Deployment to read from the Secret |
+| 22 | `kubernetes/helm-charts/api-service/values.yaml` | `password` field in values.yaml encourages storing secrets in plain Helm values | should-fix | no | Would use external secret store or sealed secrets. Current value is empty because sandbox has no auth |
+| 23 | `kubernetes/gitops/sandbox/api-service/kustomization.yaml` | `chartHome` points at `helm-chart` (singular), directory is `helm-charts` | blocker | yes | Fixed path |
+| 24 | `kubernetes/gitops/sandbox/api-service/kustomization.yaml` | `images` block name `api` does not match chart image `api-service` | should-fix | yes | Removed broken block |
+| 25 | `kubernetes/gitops/sandbox/api-service/kustomization.yaml` | Patch targets Deployment `api-svc`, real name is `api-service` | should-fix | yes | Removed broken patch |
+| 26 | `kubernetes/gitops/sandbox/api-service/kustomization.yaml` | Top-level `namespace: apps` does not propagate to Helm-rendered resources, deployed to `default` | blocker | worked around | Applied with `-n apps`, cleaner fix is `metadata.namespace` in each template |
+| 27 | `kubernetes/app/server.js` | Mongo driver does not reconnect after network blip or host suspend, readiness fails | nice-to-have | no | Would add reconnect logic or restart on broken connection |
 
 ## Task 2 - Terraform
 
-Things I fixed to make validate pass:
-- In modules/mongodb-instance/main.tf, the disk size line said var.disk_siz_gb but the variable is named disk_size_gb. It is a typo, so the module could not find the variable. Fixed.
-- The module ignored its own zone variable and hardcoded us-central1-a instead. Now it uses var.zone, so the caller decides the zone, not the module.
-- The zone variable had no type and no description. I added the string type and a description.
-- The replica_count variable had no type. I added the number type. I also changed the default from 2 to 3, because a MongoDB replica set needs at least 3 members to have a proper quorum. With 2 members, if one goes down, the other cannot vote alone and the set cannot elect a primary.
-- The internal_ips output had no description. I added one.
-
-Other things I noticed but did not need to fix for validate to pass:
-- The instance was on the default network and had access_config set, which gives the instance a public IP address. A database should never have a public IP. I removed the access_config block, but in a real setup the instance should live on a private subnet with firewall rules and no external address.
-- The provider block in sandbox/mongodb-api-service/main.tf has no version constraint on the google provider. Pinning a version is safer, because a future provider release could break the config without warning.
-- The GCP project is hardcoded as synthetic-sandbox. It should come from a variable, so the same config can be reused in different projects.
-- The backend in state.tf is AWS S3, but the infrastructure is in GCP. That mix does not make sense. It should use a GCS backend instead, since GCS is the native option for GCP.
-- The S3 backend has no DynamoDB lock table and no encryption. Without locking, two people running apply at the same time can corrupt the state. Without encryption, the state file is stored in plain text.
-- The backend bucket name is hardcoded. It should come from a variable or be passed at init time, so the same config works in different environments.
-- The instance has no service_account attached. In production you would attach a service account with least privilege, so the instance can talk to GCP services without keys.
-- The instance has no deletion_protection set. That means a terraform destroy would wipe the database without any warning. For a database, deletion protection should be on.
-- The image was debian-cloud/debian-11. Debian 11 is close to end of life. I changed it to debian-12.
+| # | File / area | Issue | Severity | Fixed? | Notes |
+|---|---|---|---|---|---|
+| 1 | `terraform/modules/mongodb-instance/main.tf` | `var.disk_siz_gb` typo, variable is `disk_size_gb` | blocker | yes | Fixed name |
+| 2 | `terraform/modules/mongodb-instance/main.tf` | Hardcoded zone `us-central1-a`, ignores `var.zone` | should-fix | yes | Uses `var.zone` |
+| 3 | `terraform/modules/mongodb-instance/variables.tf` | `zone` has no type or description | nice-to-have | yes | Added both |
+| 4 | `terraform/modules/mongodb-instance/variables.tf` | `replica_count` has no type | nice-to-have | yes | Added `number` |
+| 5 | `terraform/modules/mongodb-instance/variables.tf` | `replica_count` default 2, replica set needs 3 for quorum | should-fix | yes | Changed to 3 |
+| 6 | `terraform/modules/mongodb-instance/outputs.tf` | `internal_ips` has no description | nice-to-have | yes | Added one |
+| 7 | `terraform/modules/mongodb-instance/main.tf` | `access_config {}` gives database a public IP | should-fix | yes | Removed, would use private subnet in production |
+| 8 | `terraform/sandbox/mongodb-api-service/main.tf` | No provider version constraint on `hashicorp/google` | nice-to-have | no | Would pin a version |
+| 9 | `terraform/sandbox/mongodb-api-service/main.tf` | GCP project hardcoded as `synthetic-sandbox` | should-fix | no | Would make it a variable |
+| 10 | `terraform/sandbox/mongodb-api-service/state.tf` | S3 backend for GCP infrastructure, mismatch | should-fix | no | Would use GCS backend |
+| 11 | `terraform/sandbox/mongodb-api-service/state.tf` | No DynamoDB lock table, no encryption | should-fix | no | Would add locking and encryption |
+| 12 | `terraform/sandbox/mongodb-api-service/state.tf` | Bucket name hardcoded | nice-to-have | no | Would pass at init time |
+| 13 | `terraform/modules/mongodb-instance/main.tf` | No `service_account` attached | should-fix | no | Would attach least-privilege SA |
+| 14 | `terraform/modules/mongodb-instance/main.tf` | No `deletion_protection` | should-fix | no | Would enable for a database |
+| 15 | `terraform/modules/mongodb-instance/main.tf` | Image `debian-11` close to end of life | nice-to-have | yes | Changed to `debian-12` |
 
 ## Task 3 - Chef
 
-Recipe issues (chef/cookbooks/mongodb/recipes/default.rb):
-- The resource order was wrong. The recipe ran rs.initiate() before the config file was written and before mongod was started. On a fresh host this fails.
-- The recipe did not add the MongoDB apt repository. mongodb-org is not in the default Ubuntu repos, so the package install would fail.
-- The package resource did not use a version. The version attribute existed but was ignored.
-- execute 'enable-mongod' ran systemctl enable every converge and did not notify anything. Replaced with a service resource that enables and starts in one step.
-- The replica set init was not idempotent. It ran on every converge with no guard. Added a not_if check.
-- The init used the mongo shell, which is removed in MongoDB 6 and later. Changed to mongosh.
-- No wait for mongod to be ready before running rs.initiate(). Added a wait step.
-- The service resource only did :start, not :enable, so mongod would not start on boot.
-- The template did not notify the service, so config changes did not trigger a restart.
-- The data directory had no mode set. Changed to 0750 because it holds database files.
+| # | File / area | Issue | Severity | Fixed? | Notes |
+|---|---|---|---|---|---|
+| 1 | `chef/cookbooks/mongodb/recipes/default.rb` | `rs.initiate()` runs before config written and before mongod started | blocker | yes | Reordered resources |
+| 2 | `chef/cookbooks/mongodb/recipes/default.rb` | No MongoDB apt repository, `mongodb-org` install would fail | blocker | yes | Added `apt_repository` |
+| 3 | `chef/cookbooks/mongodb/recipes/default.rb` | Package resource ignores the version attribute | should-fix | yes | Wired it up |
+| 4 | `chef/cookbooks/mongodb/recipes/default.rb` | `execute 'enable-mongod'` runs every converge, does not notify | should-fix | yes | Replaced with `service` resource |
+| 5 | `chef/cookbooks/mongodb/recipes/default.rb` | Replica set init not idempotent | should-fix | yes | Added `not_if` guard |
+| 6 | `chef/cookbooks/mongodb/recipes/default.rb` | Uses `mongo` shell, removed in MongoDB 6 | blocker | yes | Changed to `mongosh` |
+| 7 | `chef/cookbooks/mongodb/recipes/default.rb` | No wait for mongod before `rs.initiate()` | should-fix | yes | Added a wait step |
+| 8 | `chef/cookbooks/mongodb/recipes/default.rb` | `service` only does `:start`, not `:enable` | should-fix | yes | Changed to `[:enable, :start]` |
+| 9 | `chef/cookbooks/mongodb/recipes/default.rb` | Template does not notify service, config changes do not restart mongod | should-fix | yes | Added `notifies :restart` |
+| 10 | `chef/cookbooks/mongodb/recipes/default.rb` | Data directory has no mode | nice-to-have | yes | Set to 0750 |
+| 11 | `chef/cookbooks/mongodb/attributes/default.rb` | `bind_ip` set with `node.default` instead of `default` | nice-to-have | yes | Changed to `default` |
+| 12 | `chef/cookbooks/mongodb/attributes/default.rb` | `bind_ip` attribute never used, template hardcodes `0.0.0.0` | should-fix | yes | Wired up, default `127.0.0.1` |
+| 13 | `chef/cookbooks/mongodb/attributes/default.rb` | Admin password hardcoded `admin123` | should-fix | yes | Set to `nil`, would use Vault or data bag |
+| 14 | `chef/cookbooks/mongodb/attributes/default.rb` | MongoDB version `4.2.0` EOL | should-fix | yes | Changed to `6.0` |
+| 15 | `chef/cookbooks/mongodb/templates/mongod.conf.erb` | `bindIp` hardcoded `0.0.0.0` | should-fix | yes | Uses `node['mongodb']['bind_ip']` |
+| 16 | `chef/cookbooks/mongodb/templates/mongod.conf.erb` | `authorization: disabled` | blocker | yes | Changed to `enabled` |
+| 17 | `chef/cookbooks/mongodb/templates/mongod.conf.erb` | `setParameter` block for `adminUser` / `adminPassword` is not valid MongoDB config | blocker | yes | Removed, admin users created with `db.createUser` |
+| 18 | `chef/cookbooks/mongodb/templates/mongod.conf.erb` | No log settings | nice-to-have | yes | Added `systemLog` |
+| 19 | `chef/cookbooks/mongodb/templates/mongod.conf.erb` | No WiredTiger cache limit | nice-to-have | yes | Added `cacheSizeGB` |
 
-Attributes issues (chef/cookbooks/mongodb/attributes/default.rb):
-- bind_ip was set with node.default instead of default. Both work, but the standard form in an attribute file is default.
-- The bind_ip attribute was never used. The template hardcoded 0.0.0.0.
-- The admin password was hardcoded as admin123. Passwords should not live in a cookbook. They should come from an encrypted data bag, Vault, or the Chef secret store.
-- MongoDB version 4.2.0 is end of life. Changed to 6.0.
+## Anything I would do with more time
 
-Template issues (chef/cookbooks/mongodb/templates/mongod.conf.erb):
-- bindIp was hardcoded as 0.0.0.0. Changed to use the bind_ip attribute, and defaulted it to 127.0.0.1.
-- authorization was disabled. Combined with bindIp 0.0.0.0, the database was open to anyone on the network. Changed to enabled.
-- The setParameter block for adminUser and adminPassword is not valid MongoDB configuration. Those are not real parameters. The credentials also did not exist in MongoDB's user database. Removed. Admin users are created with db.createUser, not with config parameters.
-- No log settings. Added systemLog so logs go to a file with append.
-- No wiredTiger cache limit. Added a cacheSizeGB so mongod does not eat all the host RAM.
+- Add a `.dockerignore` and pin the base image to a digest.
+- Wire the Helm chart to actually use the Secret for `MONGO_URI` instead of putting it in `values.yaml`.
+- Add a `NetworkPolicy` so only the `apps` namespace can reach MongoDB.
+- Add integration tests that run on each push, so the kind deployment is verified automatically.
+- Move the Terraform state to a GCS backend with locking and encryption.
+- Add `deletion_protection` and a least-privilege `service_account` to the MongoDB instances.
+- Replace the MongoDB connection in `server.js` with reconnect logic and add proper error handling.
+- Add `livenessProbe`/`readinessProbe` tuning based on real traffic, not fixed numbers.
