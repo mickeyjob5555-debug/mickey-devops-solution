@@ -4,7 +4,7 @@ kind: Kustomization
 namespace: apps
 
 helmGlobals:
-  chartHome: ../../../helm-chart
+  chartHome: ../../../helm-charts
 
 helmCharts:
   - name: api-service
@@ -14,21 +14,4 @@ helmCharts:
       image:
         repository: api-service
         tag: sandbox
-
-# Pin the image for the sandbox.
-images:
-  - name: api
-    newTag: sandbox
-
-# Give the workload a small resource floor in the sandbox.
-patches:
-  - target:
-      kind: Deployment
-      name: api-svc
-    patch: |-
-      - op: add
-        path: /spec/template/spec/containers/0/resources
-        value:
-          requests:
-            cpu: 50m
-            memory: 64Mi
+        pullPolicy: IfNotPresent

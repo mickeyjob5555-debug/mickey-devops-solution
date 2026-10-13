@@ -1,24 +1,25 @@
 # api-service container image.
-#
-# NOTE TO CANDIDATE: this Dockerfile builds and runs the service, but it has a
-# number of problems ranging from "it won't build" to "it works but you would
-# never ship this". Fix what you can; note what you can't.
-
-FROM node:18-slimm
-
-# Install some tooling we "might need" for debugging in the container.
-RUN apt-get update && apt-get install -y curl vim build-essential
+FROM node:18-slim
 
 WORKDIR /app
 
-# Bring the whole build context in up front.
-COPY . .
+# Copy package.json first so npm install is cached independently of source changes.
+COPY package.json ./
 
-RUN npm install
+# Install only what's needed at runtime.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends curl \
+ && rm -rf /var/lib/apt/lists/* \
+ && npm install --omit=dev
 
-# Mongo credentials for the service to use.
-ENV MONGO_PASSWORD=sup3rs3cr3t-changeme
+# Application code.
+COPY server.js ./
+
+# Secrets must NOT be baked into the image. MONGO_URI comes from a Kubernetes Secret at runtime.
 
 EXPOSE 3000
+
+# Run as the non-root "node" user.
+USER node
 
 CMD ["npm", "start"]

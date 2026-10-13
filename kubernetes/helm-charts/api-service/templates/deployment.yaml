@@ -14,12 +14,32 @@ spec:
       labels:
         app: api-service
     spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app: api-service
+                topologyKey: kubernetes.io/hostname
       containers:
         - name: api-service
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
-        ports:
-            - containerPort: {{ .Values.service.targetPort }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          ports:
+            - name: http
+              containerPort: {{ .Values.service.targetPort }}
           env:
             - name: PORT
               value: "{{ .Values.service.targetPort }}"
@@ -27,16 +47,22 @@ spec:
               value: "{{ .Values.mongo.uri }}"
             - name: MONGO_DB
               value: "{{ .Values.mongo.db }}"
+          startupProbe:
+            httpGet:
+              path: /
+              port: http
+            failureThreshold: 30
+            periodSeconds: 2
           livenessProbe:
             httpGet:
-              path: /healthz
-              port: {{ .Values.service.targetPort }}
+              path: /
+              port: http
             initialDelaySeconds: 5
             periodSeconds: 10
           readinessProbe:
             httpGet:
               path: /healthz
-              port: {{ .Values.service.targetPort }}
+              port: http
             initialDelaySeconds: 5
             periodSeconds: 10
           resources:

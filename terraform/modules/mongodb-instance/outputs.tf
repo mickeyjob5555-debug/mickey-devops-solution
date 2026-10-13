@@ -4,5 +4,6 @@ output "instance_names" {
 }
 
 output "internal_ips" {
-  value = google_compute_instance.mongodb[*].network_interface[0].network_ip
+  description = "Internal IP addresses of the provisioned MongoDB instances."
+  value       = google_compute_instance.mongodb[*].network_interface[0].network_ip
 }

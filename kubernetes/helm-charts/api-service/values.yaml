@@ -1,27 +1,34 @@
-replicaCount: 1
+replicaCount: 2
 
 image:
   repository: api-service
-  tag: latest
-  pullPolicy: Always
+  tag: sandbox
+  pullPolicy: IfNotPresent
 
 service:
   port: 80
   targetPort: 3000
 
-# MongoDB connection settings. The password is here so the chart is
-# "self-contained" and easy to deploy.
+# MongoDB connection settings for the sandbox.
+# The sandbox runs MongoDB without auth, so there is no password in the URI.
+# The URI must include replicaSet=rs0 and the correct namespace (data).
 mongo:
   db: api_service
-  # Single host, no replicaSet parameter.
-  uri: "mongodb://api_user:sup3rs3cr3t-changeme@mongodb-0.mongodb.svc.cluster.local:27017/api_service?authSource=admin"
-  password: "sup3rs3cr3t-changeme"
+  uri: "mongodb://mongodb-0.mongodb.data.svc.cluster.local:27017/api_service?replicaSet=rs0"
+  # Placeholder for the unused Secret template. In production, the password
+  # would come from an external secret and MONGO_URI would be built at deploy time.
+  password: ""
 
-resources: {}
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    cpu: 200m
+    memory: 128Mi
 
-# Pod disruption budget for the workload.
 pdb:
-  enabled: false
+  enabled: true
   minAvailable: 1
 
 nodeSelector: {}
